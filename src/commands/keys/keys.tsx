@@ -5,6 +5,7 @@ import type { LocalJSXCommandContext, LocalJSXCommandOnDone } from '../../types/
 import {
   applyKeyProfile,
   discoverModels,
+  getSessionActiveProfile,
   inferWireApi,
   loadKeyProfiles,
   saveKeyProfiles,
@@ -19,8 +20,17 @@ function summarize(name: string, profile: KeyProfile, active?: string): string {
   return `${marker}${name}  [${wire}]  ${models}`;
 }
 
-function KeyPicker({ file, onDone }: { file: KeyProfilesFile; onDone: LocalJSXCommandOnDone }): React.ReactNode {
+function KeyPicker({
+  file,
+  onDone,
+  setAppState,
+}: {
+  file: KeyProfilesFile;
+  onDone: LocalJSXCommandOnDone;
+  setAppState: LocalJSXCommandContext['setAppState'];
+}): React.ReactNode {
   const names = Object.keys(file.profiles);
+  const active = getSessionActiveProfile() ?? file.active;
   if (names.length === 0) {
     return (
       <Box flexDirection="column">
@@ -37,19 +47,22 @@ function KeyPicker({ file, onDone }: { file: KeyProfilesFile; onDone: LocalJSXCo
         <Text dimColor>Arrow keys to navigate, Enter to select, Esc to cancel.</Text>
       </Box>
       <Select
-        defaultValue={file.active ?? names[0]!}
+        defaultValue={active ?? names[0]!}
         options={names.map(name => ({
           label: (
             <Text>
-              {file.active === name ? '● ' : '  '}
+              {active === name ? '● ' : '  '}
               {name} <Text dimColor>({file.profiles[name]?.models?.length ?? 0} models)</Text>
             </Text>
           ),
           value: name,
         }))}
         onChange={name => {
-          applyKeyProfile(name, file.profiles[name]!, file);
-          onDone(`Switched to key profile: ${name}`, { display: 'system' });
+          const model = applyKeyProfile(name, file.profiles[name]!, file);
+          if (model) {
+            setAppState(prev => ({ ...prev, mainLoopModel: model, mainLoopModelForSession: null }));
+          }
+          onDone(`Switched to key profile: ${name} (this session only)`, { display: 'system' });
         }}
         onCancel={() => onDone('Key selection cancelled.', { display: 'system' })}
         visibleOptionCount={Math.min(names.length, 8)}
@@ -60,7 +73,7 @@ function KeyPicker({ file, onDone }: { file: KeyProfilesFile; onDone: LocalJSXCo
 
 export async function call(
   onDone: LocalJSXCommandOnDone,
-  _context: LocalJSXCommandContext,
+  context: LocalJSXCommandContext,
   args: string,
 ): Promise<React.ReactNode> {
   const file = loadKeyProfiles();
@@ -68,7 +81,7 @@ export async function call(
   const sub = tokens[0]?.toLowerCase();
 
   if (!sub) {
-    return <KeyPicker file={file} onDone={onDone} />;
+    return <KeyPicker file={file} onDone={onDone} setAppState={context.setAppState} />;
   }
 
   if (sub === 'list' || sub === 'ls') {
@@ -77,14 +90,20 @@ export async function call(
       onDone('No key profiles registered.', { display: 'system' });
       return null;
     }
-    onDone(['Key profiles:', ...names.map(name => summarize(name, file.profiles[name]!, file.active))].join('\n'), {
-      display: 'system',
-    });
+    onDone(
+      [
+        'Key profiles:',
+        ...names.map(name => summarize(name, file.profiles[name]!, getSessionActiveProfile() ?? file.active)),
+      ].join('\n'),
+      {
+        display: 'system',
+      },
+    );
     return null;
   }
 
   if (sub === 'show') {
-    const active = file.active;
+    const active = getSessionActiveProfile() ?? file.active;
     if (!active || !file.profiles[active]) {
       onDone('No active key profile.', { display: 'system' });
       return null;
@@ -104,8 +123,11 @@ export async function call(
       });
       return null;
     }
-    applyKeyProfile(name, profile, file);
-    onDone(`Switched to key profile: ${name}`, { display: 'system' });
+    const model = applyKeyProfile(name, profile, file);
+    if (model) {
+      context.setAppState(prev => ({ ...prev, mainLoopModel: model, mainLoopModelForSession: null }));
+    }
+    onDone(`Switched to key profile: ${name} (this session only)`, { display: 'system' });
     return null;
   }
 
@@ -135,7 +157,11 @@ export async function call(
     const models = await discoverModels(baseUrl, apiKey);
     const profile: KeyProfile = { apiKey, baseUrl, wireApi, models };
     file.profiles[name] = profile;
-    applyKeyProfile(name, profile, file);
+    saveKeyProfiles(file);
+    const model = applyKeyProfile(name, profile, file);
+    if (model) {
+      context.setAppState(prev => ({ ...prev, mainLoopModel: model, mainLoopModelForSession: null }));
+    }
     onDone(
       `Added and switched to key profile: ${name}\n` +
         `baseUrl: ${baseUrl}\n` +

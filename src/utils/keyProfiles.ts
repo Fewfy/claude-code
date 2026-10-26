@@ -2,10 +2,6 @@ import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { clearOpenAIClientCache } from '../services/api/openai/client.js'
 import { getClaudeConfigHomeDir } from './envUtils.js'
-import {
-  getSettings_DEPRECATED,
-  updateSettingsForSource,
-} from './settings/settings.js'
 
 export type WireApi = 'chat' | 'responses'
 
@@ -21,6 +17,14 @@ export type KeyProfile = {
 export type KeyProfilesFile = {
   active?: string
   profiles: Record<string, KeyProfile>
+}
+
+// The profile selected for THIS process. Runtime switches update this without
+// touching the file's `active` (which stays the launch default).
+let sessionActiveProfile: string | undefined
+
+export function getSessionActiveProfile(): string | undefined {
+  return sessionActiveProfile
 }
 
 export function keyProfilesPath(): string {
@@ -150,6 +154,7 @@ export function applyActiveKeyProfileOnStartup(): void {
   const file = loadKeyProfiles()
   const profile = file.active ? file.profiles[file.active] : undefined
   if (!profile) return
+  sessionActiveProfile = file.active
 
   const env = buildProfileEnv(profile)
   const models = profile.models ?? []
@@ -179,31 +184,25 @@ export function applyActiveKeyProfileOnStartup(): void {
 }
 
 /**
- * Make a profile active: update the process environment, drop the cached
- * OpenAI client, persist the active profile and mirror the env into
- * settings.json so the next launch starts with it.
+ * Switch the active profile for THIS session only: update process.env and drop
+ * the cached OpenAI client. Deliberately does not touch settings.json or the
+ * `active` field in key-profiles.json, so other sessions and future launches
+ * keep using the configured default key.
  */
 export function applyKeyProfile(
-  name: string,
+  _name: string,
   profile: KeyProfile,
-  file: KeyProfilesFile,
-): void {
+  _file: KeyProfilesFile,
+): string | undefined {
   const env = buildProfileEnv(profile)
-  // An explicit switch also moves the main model to one the key can serve;
-  // startup application keeps whatever model the user already chose.
-  if (profile.models?.length) {
-    env.ANTHROPIC_MODEL = profile.models[0]!
+  const mainModel = profile.models?.[0]
+  if (mainModel) {
+    env.ANTHROPIC_MODEL = mainModel
   }
   for (const [key, value] of Object.entries(env)) {
     process.env[key] = value
   }
   clearOpenAIClientCache()
-
-  file.active = name
-  saveKeyProfiles(file)
-
-  const currentEnv = getSettings_DEPRECATED()?.env ?? {}
-  updateSettingsForSource('userSettings', {
-    env: { ...currentEnv, ...env },
-  })
+  sessionActiveProfile = _name
+  return mainModel
 }
