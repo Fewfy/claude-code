@@ -149,9 +149,33 @@ export function applyProfileEnvOnly(profile: KeyProfile): void {
 export function applyActiveKeyProfileOnStartup(): void {
   const file = loadKeyProfiles()
   const profile = file.active ? file.profiles[file.active] : undefined
-  if (profile) {
-    applyProfileEnvOnly(profile)
+  if (!profile) return
+
+  const env = buildProfileEnv(profile)
+  const models = profile.models ?? []
+  if (models.length > 0) {
+    // Keep the configured main model when the profile can serve it (resolve
+    // logical aliases through the current model map first).
+    const current = process.env.ANTHROPIC_MODEL
+    let resolved = current
+    try {
+      const map = JSON.parse(process.env.OPENAI_MODEL_MAP ?? '{}') as Record<
+        string,
+        string
+      >
+      if (current && map[current]) resolved = map[current]
+    } catch {
+      // Ignore a malformed map.
+    }
+    if (!resolved || !models.includes(resolved)) {
+      env.ANTHROPIC_MODEL = models[0]!
+    }
   }
+
+  for (const [key, value] of Object.entries(env)) {
+    process.env[key] = value
+  }
+  clearOpenAIClientCache()
 }
 
 /**
