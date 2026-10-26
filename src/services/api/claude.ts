@@ -1340,7 +1340,32 @@ async function* queryModel(
   // OpenAI-compatible provider: delegate to the OpenAI adapter layer
   // after shared preprocessing (message normalization, tool filtering,
   // media stripping) but before Anthropic-specific logic (betas, thinking, caching).
-  if (getAPIProvider() === 'openai') {
+  //
+  // Per-model transport routing: models listed in ANTHROPIC_NATIVE_MODELS keep
+  // the native Anthropic /v1/messages path even when the OpenAI layer is on
+  // (some gateways support claude_native for a model but mishandle its
+  // Responses-API tool calls). OPENAI_MODEL_MAP maps the logical name to the
+  // provider's model id before the native request is built.
+  const nativeModels = (process.env.ANTHROPIC_NATIVE_MODELS ?? '')
+    .split(',')
+    .map(name => name.trim())
+    .filter(Boolean)
+  const routedToNative =
+    getAPIProvider() === 'openai' && nativeModels.includes(options.model)
+  if (routedToNative) {
+    try {
+      const modelMap = JSON.parse(
+        process.env.OPENAI_MODEL_MAP ?? '{}',
+      ) as Record<string, string>
+      if (modelMap[options.model]) {
+        options.model = modelMap[options.model]
+      }
+    } catch {
+      // Ignore a malformed map; send the logical name as-is.
+    }
+  }
+
+  if (getAPIProvider() === 'openai' && !routedToNative) {
     const { queryModelOpenAI } = await import('./openai/index.js')
     // OpenAI emulates Anthropic's dynamic tool loading client-side. It needs
     // the full tool pool so SearchExtraToolsTool can search deferred MCP tools that

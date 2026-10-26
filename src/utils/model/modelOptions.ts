@@ -553,7 +553,14 @@ function getKnownModelOption(model: string): ModelOption | null {
 }
 
 export function getModelOptions(fastMode = false): ModelOption[] {
-  const options = getModelOptionsBase(fastMode)
+  let options = getModelOptionsBase(fastMode)
+
+  // With a custom OpenAI-compatible model map, the built-in Claude presets
+  // (Sonnet/Opus/Haiku) would resolve to provider IDs the gateway doesn't
+  // have. Keep only "Default"; the mapped logical names are added below.
+  if (getAPIProvider() === 'openai' && process.env.OPENAI_MODEL_MAP) {
+    options = options.filter(option => option.value === null)
+  }
 
   // Add the custom model from the ANTHROPIC_CUSTOM_MODEL_OPTION env var
   const envCustomModel = process.env.ANTHROPIC_CUSTOM_MODEL_OPTION
@@ -568,6 +575,28 @@ export function getModelOptions(fastMode = false): ModelOption[] {
         process.env.ANTHROPIC_CUSTOM_MODEL_OPTION_DESCRIPTION ??
         `Custom model (${envCustomModel})`,
     })
+  }
+
+  // Add logical model names from OPENAI_MODEL_MAP so they show up in /model
+  // when using an OpenAI-compatible gateway with custom model IDs.
+  if (getAPIProvider() === 'openai' && process.env.OPENAI_MODEL_MAP) {
+    try {
+      const map = JSON.parse(process.env.OPENAI_MODEL_MAP) as Record<
+        string,
+        string
+      >
+      for (const [logicalName, providerModel] of Object.entries(map)) {
+        if (!options.some(existing => existing.value === logicalName)) {
+          options.push({
+            value: logicalName,
+            label: logicalName,
+            description: `Maps to ${providerModel}`,
+          })
+        }
+      }
+    } catch {
+      // Ignore malformed JSON — the picker falls back to built-in options.
+    }
   }
 
   // Append additional model options fetched during bootstrap

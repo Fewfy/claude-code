@@ -32,6 +32,7 @@ import {
   adaptResponsesStreamToAnthropic,
   buildResponsesRequest,
   createChatGPTResponsesStream,
+  createOpenAIResponsesStreamWithFallback,
   type ResponsesReasoningEffort,
 } from './responsesAdapter.js'
 import { normalizeMessagesForAPI } from '../../../utils/messages.js'
@@ -100,6 +101,34 @@ function getChatGPTResponsesReasoningEffort(
     convertToResponsesReasoningEffort(effortValue) ??
     'medium'
   )
+}
+
+/**
+ * Ordered model list for rate-limit fallback: the current model first, then
+ * OPENAI_FALLBACK_MODELS (comma-separated), else the OPENAI_MODEL_MAP values.
+ */
+function getFallbackModels(current: string): string[] {
+  const explicit = process.env.OPENAI_FALLBACK_MODELS
+  let candidates: string[]
+  if (explicit) {
+    candidates = explicit.split(',')
+  } else {
+    try {
+      const parsed = JSON.parse(process.env.OPENAI_MODEL_MAP ?? '{}') as Record<
+        string,
+        string
+      >
+      candidates = Object.values(parsed)
+    } catch {
+      candidates = []
+    }
+  }
+  return [
+    ...new Set([
+      current,
+      ...candidates.map(name => name.trim()).filter(Boolean),
+    ]),
+  ]
 }
 
 /**
@@ -352,6 +381,12 @@ export async function* queryModelOpenAI(
     )
 
     const useChatGPTResponses = isChatGPTAuthEnabled()
+    // Generic OpenAI-compatible endpoints can opt into the Responses API with
+    // OPENAI_WIRE_API=responses (required by models that reject function tools
+    // on /v1/chat/completions).
+    const useGenericResponses =
+      !useChatGPTResponses && process.env.OPENAI_WIRE_API === 'responses'
+    const useResponses = useChatGPTResponses || useGenericResponses
     // OpenAI's official OAuth and API-key routes share the same prompt-cache
     // contract. Scope the key to the real conversation so resumed turns stay
     // sticky while unrelated sessions do not share a routing bucket. Generic
@@ -368,45 +403,65 @@ export async function* queryModelOpenAI(
     )
 
     // 11. Call OpenAI API with streaming. ChatGPT subscription auth uses the
-    // Codex Responses backend; API-key/OpenAI-compatible auth keeps the
-    // existing Chat Completions adapter.
-    const adaptedStream = useChatGPTResponses
-      ? adaptResponsesStreamToAnthropic(
-          await createChatGPTResponsesStream({
-            request: buildResponsesRequest({
-              model: openaiModel,
+    // Codex Responses backend; OpenAI-compatible endpoints use the generic
+    // Responses API when OPENAI_WIRE_API=responses, otherwise Chat Completions.
+    const adaptedStream = await (async () => {
+      if (useResponses) {
+        if (useChatGPTResponses) {
+          return adaptResponsesStreamToAnthropic(
+            await createChatGPTResponsesStream({
+              request: buildResponsesRequest({
+                model: openaiModel,
+                messages: openaiMessages,
+                tools: openaiTools,
+                toolChoice: openaiToolChoice,
+                reasoningEffort,
+                promptCacheKey: sessionPromptCacheKey,
+              }),
+              signal,
+              fetchOverride: options.fetchOverride as unknown as typeof fetch,
+            }),
+            openaiModel,
+          )
+        }
+        return createOpenAIResponsesStreamWithFallback({
+          models: getFallbackModels(openaiModel),
+          makeRequest: model =>
+            buildResponsesRequest({
+              model,
               messages: openaiMessages,
               tools: openaiTools,
               toolChoice: openaiToolChoice,
               reasoningEffort,
-              promptCacheKey: sessionPromptCacheKey,
             }),
-            signal,
-            fetchOverride: options.fetchOverride as unknown as typeof fetch,
+          signal,
+          baseUrl: process.env.OPENAI_BASE_URL ?? '',
+          apiKey: process.env.OPENAI_API_KEY ?? '',
+          fetchOverride: options.fetchOverride as unknown as typeof fetch,
+        })
+      }
+      return adaptOpenAIStreamToAnthropic(
+        await getOpenAIClient({
+          maxRetries: 0,
+          fetchOverride: options.fetchOverride as unknown as typeof fetch,
+          source: options.querySource,
+        }).chat.completions.create(
+          buildOpenAIRequestBody({
+            model: openaiModel,
+            messages: openaiMessages,
+            tools: openaiTools,
+            toolChoice: openaiToolChoice,
+            enableThinking,
+            maxTokens,
+            temperatureOverride: options.temperatureOverride,
+            promptCacheKey,
           }),
-          openaiModel,
-        )
-      : adaptOpenAIStreamToAnthropic(
-          await getOpenAIClient({
-            maxRetries: 0,
-            fetchOverride: options.fetchOverride as unknown as typeof fetch,
-            source: options.querySource,
-          }).chat.completions.create(
-            buildOpenAIRequestBody({
-              model: openaiModel,
-              messages: openaiMessages,
-              tools: openaiTools,
-              toolChoice: openaiToolChoice,
-              enableThinking,
-              maxTokens,
-              temperatureOverride: options.temperatureOverride,
-              promptCacheKey,
-            }),
-            { signal },
-          ),
-          openaiModel,
-          { includeCacheWriteTokens: useOfficialOpenAICache },
-        )
+          { signal },
+        ),
+        openaiModel,
+        { includeCacheWriteTokens: useOfficialOpenAICache },
+      )
+    })()
 
     // 12. Convert OpenAI stream to Anthropic events, then process into
     //     AssistantMessage + StreamEvent (matching the Anthropic path behavior)

@@ -28,17 +28,40 @@ function getModelFamily(model: string): 'haiku' | 'sonnet' | 'opus' | null {
  *
  * Priority:
  * 1. OPENAI_MODEL env var (override all)
- * 2. OPENAI_DEFAULT_{FAMILY}_MODEL env var (e.g. OPENAI_DEFAULT_SONNET_MODEL)
- * 3. ANTHROPIC_DEFAULT_{FAMILY}_MODEL env var (backward compatibility)
- * 4. DEFAULT_MODEL_MAP lookup
- * 5. Pass through original model name
+ * 2. OPENAI_MODEL_MAP (JSON object of logical → provider model names)
+ * 3. OPENAI_DEFAULT_{FAMILY}_MODEL env var (e.g. OPENAI_DEFAULT_SONNET_MODEL)
+ * 4. ANTHROPIC_DEFAULT_{FAMILY}_MODEL env var (backward compatibility)
+ * 5. DEFAULT_MODEL_MAP lookup
+ * 6. Pass through original model name
  */
+/**
+ * Optional user-defined mapping (JSON object in OPENAI_MODEL_MAP), e.g.
+ * `{"opus-5.5":"claude-opus-5-5-tob","gpt-6.1-sol":"gpt-6.1-sol-tob-ptu"}`.
+ * Lets a gateway expose logical names that differ from the provider IDs.
+ */
+function getCustomModelMap(): Record<string, string> {
+  const raw = process.env.OPENAI_MODEL_MAP
+  if (!raw) return {}
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+  } catch {
+    // Ignore malformed JSON — fall through to the built-in mapping.
+  }
+  return {}
+}
+
 export function resolveOpenAIModel(anthropicModel: string): string {
   if (process.env.OPENAI_MODEL) {
     return process.env.OPENAI_MODEL
   }
 
   const cleanModel = anthropicModel.replace(/\[1m\]$/, '')
+
+  const custom = getCustomModelMap()
+  if (custom[cleanModel]) return custom[cleanModel]
 
   const family = getModelFamily(cleanModel)
   if (family) {
