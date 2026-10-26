@@ -107,15 +107,9 @@ export function inferWireApi(baseUrl: string): WireApi {
 }
 
 /**
- * Make a profile active: update the process environment, drop the cached
- * OpenAI client, persist the active profile and mirror the env into
- * settings.json so the next launch starts with it.
+ * Build the environment variables for a profile without mutating process state.
  */
-export function applyKeyProfile(
-  name: string,
-  profile: KeyProfile,
-  file: KeyProfilesFile,
-): void {
+function buildProfileEnv(profile: KeyProfile): Record<string, string> {
   const wireApi = profile.wireApi ?? inferWireApi(profile.baseUrl)
   const anthropicBaseUrl =
     profile.anthropicBaseUrl ?? deriveAnthropicBase(profile.baseUrl)
@@ -134,8 +128,48 @@ export function applyKeyProfile(
       Object.fromEntries(models.map(model => [model, model])),
     )
     env.CLAUDE_CODE_SUBAGENT_MODEL = models[0]!
+    // Keep the retry/fallback pool inside this key's entitled models.
+    env.OPENAI_FALLBACK_MODELS = models.join(',')
   }
+  return env
+}
 
+/** Apply a profile's env to the current process (no persistence). */
+export function applyProfileEnvOnly(profile: KeyProfile): void {
+  for (const [key, value] of Object.entries(buildProfileEnv(profile))) {
+    process.env[key] = value
+  }
+  clearOpenAIClientCache()
+}
+
+/**
+ * Apply the `active` profile at startup so editing key-profiles.json directly
+ * (without running /keys) takes effect on the next launch.
+ */
+export function applyActiveKeyProfileOnStartup(): void {
+  const file = loadKeyProfiles()
+  const profile = file.active ? file.profiles[file.active] : undefined
+  if (profile) {
+    applyProfileEnvOnly(profile)
+  }
+}
+
+/**
+ * Make a profile active: update the process environment, drop the cached
+ * OpenAI client, persist the active profile and mirror the env into
+ * settings.json so the next launch starts with it.
+ */
+export function applyKeyProfile(
+  name: string,
+  profile: KeyProfile,
+  file: KeyProfilesFile,
+): void {
+  const env = buildProfileEnv(profile)
+  // An explicit switch also moves the main model to one the key can serve;
+  // startup application keeps whatever model the user already chose.
+  if (profile.models?.length) {
+    env.ANTHROPIC_MODEL = profile.models[0]!
+  }
   for (const [key, value] of Object.entries(env)) {
     process.env[key] = value
   }

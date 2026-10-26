@@ -41,6 +41,7 @@ import {
   applyConfigEnvironmentVariables,
   applySafeConfigEnvironmentVariables,
 } from '../utils/managedEnv.js'
+import { applyActiveKeyProfileOnStartup } from '../utils/keyProfiles.js'
 import { configureGlobalMTLS } from '../utils/mtls.js'
 import {
   ensureScratchpadDir,
@@ -309,6 +310,7 @@ export function initializeTelemetryAfterTrust(): void {
         )
         // Re-apply env vars to pick up remote settings before initializing telemetry.
         applyConfigEnvironmentVariables()
+        applyActiveKeyProfileOnStartup()
         await doInitializeTelemetry()
       })
       .catch(error => {

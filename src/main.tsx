@@ -95,6 +95,7 @@ import {
   resolveFastModeStatusFromCache,
 } from './utils/fastMode.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
+import { applyActiveKeyProfileOnStartup } from './utils/keyProfiles.js';
 import { createSystemMessage, createUserMessage } from './utils/messages.js';
 import { getPlatform } from './utils/platform.js';
 import { getBaseRenderOptions } from './utils/renderOptions.js';
@@ -2444,6 +2445,9 @@ async function run(): Promise<CommanderCommand> {
         // getSettings_DEPRECATED at managedEnv.ts:86 which merges all enabled
         // sources including projectSettings/localSettings.
         applyConfigEnvironmentVariables();
+        // Active key profile (if any) wins over settings.env so editing
+        // ~/.ccb/key-profiles.json directly takes effect on the next launch.
+        applyActiveKeyProfileOnStartup();
 
         // Spawn git status/log/branch now so the subprocess execution overlaps
         // with the getCommands await below and startDeferredPrefetches. After
