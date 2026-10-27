@@ -10,6 +10,7 @@ import { GlobTool } from '@claude-code-best/builtin-tools/tools/GlobTool/GlobToo
 import { NotebookEditTool } from '@claude-code-best/builtin-tools/tools/NotebookEditTool/NotebookEditTool.js'
 import { WebFetchTool } from '@claude-code-best/builtin-tools/tools/WebFetchTool/WebFetchTool.js'
 import { TaskStopTool } from '@claude-code-best/builtin-tools/tools/TaskStopTool/TaskStopTool.js'
+import { RenameTool } from '@claude-code-best/builtin-tools/tools/RenameTool/RenameTool.js'
 import { BriefTool } from '@claude-code-best/builtin-tools/tools/BriefTool/BriefTool.js'
 // Dead code elimination: conditional import for ant-only tools
 /* eslint-disable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
@@ -232,6 +233,7 @@ export function getAllBaseTools(): Tools {
     ArtifactTool,
     WebFetchTool,
     TodoWriteTool,
+    RenameTool,
     WebSearchTool,
     TaskStopTool,
     AskUserQuestionTool,
