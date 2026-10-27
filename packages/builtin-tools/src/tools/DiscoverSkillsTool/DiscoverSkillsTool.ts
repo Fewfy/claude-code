@@ -10,11 +10,16 @@ import {
 
 const inputSchema = lazySchema(() =>
   z.strictObject({
+    query: z
+      .string()
+      .optional()
+      .describe(
+        'What you want to do. Be specific — e.g. "deploy a Next.js app to Cloudflare Workers" rather than just "deploy".',
+      ),
     description: z
       .string()
-      .describe(
-        'Description of what you want to do. Be specific — e.g. "deploy a Next.js app to Cloudflare Workers" rather than just "deploy".',
-      ),
+      .optional()
+      .describe('Alias for "query" (deprecated). Prefer "query".'),
     limit: z
       .number()
       .optional()
@@ -58,7 +63,7 @@ export const DiscoverSkillsTool = buildTool({
   },
 
   renderToolUseMessage(input: Partial<DiscoverInput>) {
-    return `Searching skills: ${input.description?.slice(0, 80) ?? '...'}`
+    return `Searching skills: ${(input.query ?? input.description)?.slice(0, 80) ?? '...'}`
   },
 
   mapToolResultToToolResultBlockParam(
@@ -69,7 +74,8 @@ export const DiscoverSkillsTool = buildTool({
       return {
         tool_use_id: toolUseID,
         type: 'tool_result',
-        content: 'No matching skills found for that description.',
+        content:
+          'No matching skills found. Pass what you want to do in the "query" parameter.',
       }
     }
     const lines = content.results.map(
@@ -91,7 +97,9 @@ export const DiscoverSkillsTool = buildTool({
     const cwd = getCwd()
 
     const index = await getSkillIndex(cwd)
-    const results = searchSkills(input.description, index, input.limit ?? 5)
+    const query = input.query ?? input.description ?? ''
+    const results =
+      query.length > 0 ? searchSkills(query, index, input.limit ?? 5) : []
 
     return {
       data: {

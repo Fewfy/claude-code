@@ -30,6 +30,18 @@ describe('DiscoverSkillsTool', () => {
     expect(msg).toContain('deploy to cloudflare')
   })
 
+  test('accepts query as the search text', async () => {
+    const { DiscoverSkillsTool } = await import('../DiscoverSkillsTool.js')
+    const parsed = DiscoverSkillsTool.inputSchema.safeParse({
+      query: 'deploy to cloudflare',
+    })
+    expect(parsed.success).toBe(true)
+    const msg = DiscoverSkillsTool.renderToolUseMessage({
+      query: 'deploy to cloudflare',
+    })
+    expect(msg).toContain('deploy to cloudflare')
+  })
+
   test('mapToolResultToToolResultBlockParam formats empty results', async () => {
     const { DiscoverSkillsTool } = await import('../DiscoverSkillsTool.js')
     const result = DiscoverSkillsTool.mapToolResultToToolResultBlockParam(
